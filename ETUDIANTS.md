@@ -25,8 +25,8 @@
 
 | Nom (état civil) | Pseudo GitHub | Rôle |
 |------------------|---------------|------|
-|                  |               | porteur |
-|                  |               | membre |
+|GABARRE CLAVERIA Santiago|  RuZyoFR  | porteur |
+| DAUNIS Nathanael |  Stefffox     | membre |
 |                  |               | membre |
 
 ## 3. Rendu
