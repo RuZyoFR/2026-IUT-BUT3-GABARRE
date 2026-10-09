@@ -23,9 +23,11 @@ export function total(cart: Item[]): number {
   return sum + sum * TAX_RATE;
 }
 
-// Formate un prix en euros
+const euroFormatter = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" });
+
+// Formate un prix en euros (format français : 12,00 €)
 export function formatPrice(value: number): string {
-  return value.toFixed(2) + " €";
+  return euroFormatter.format(value);
 }
 
 // Encaisse le panier : affiche le total et prépare le paiement
