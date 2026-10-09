@@ -26,7 +26,17 @@ vi.mock("@prisma/client", () => ({
   Prisma: {},
 }));
 
-import { Product, Price, Supplier, Warehouse } from "./Product";
+import {
+  Product,
+  Price,
+  Supplier,
+  Warehouse,
+  InsufficientStockError,
+  InvalidDiscountError,
+  SupplierNotFoundError,
+  InvalidImageError,
+  InvalidSupplierError,
+} from "./Product";
 
 function hasProp(obj: unknown, propName: string): boolean {
   return typeof obj === "object" && obj !== null && propName in (obj as object);
@@ -466,5 +476,38 @@ describe("addSupplierToRegion()", () => {
     await expect(product.addSupplierToRegion("APAC", [supplier])).rejects.toThrow(
       "No supplier found for region APAC",
     );
+  });
+});
+
+describe("business errors are typed", () => {
+  it("sell() throws InsufficientStockError", async () => {
+    await expect(makeTypedProduct().sell(101)).rejects.toBeInstanceOf(InsufficientStockError);
+  });
+
+  it("addDiscount() throws InvalidDiscountError for a past date, a missing code and a 3rd discount", async () => {
+    const future = new Date(Date.now() + 1000 * 60 * 60 * 24);
+
+    await expect(makeTypedProduct().addDiscount("X", new Date(Date.now() - 1000))).rejects.toBeInstanceOf(InvalidDiscountError);
+    await expect(makeTypedProduct().addDiscount("", future)).rejects.toBeInstanceOf(InvalidDiscountError);
+
+    const product = makeTypedProduct();
+    await product.addDiscount("SUMMER20", future);
+    await expect(product.addDiscount("FALL30", future)).rejects.toBeInstanceOf(InvalidDiscountError);
+  });
+
+  it("addSupplierToRegion() throws SupplierNotFoundError", async () => {
+    await expect(makeTypedProduct().addSupplierToRegion("APAC", [])).rejects.toBeInstanceOf(SupplierNotFoundError);
+  });
+
+  it("addImage() throws InvalidImageError for a bad url", async () => {
+    await expect(makeTypedProduct().addImage("hero", "ftp://x")).rejects.toBeInstanceOf(InvalidImageError);
+    await expect(makeTypedProduct().addImage("hero", "")).rejects.toBeInstanceOf(InvalidImageError);
+  });
+
+  it("addImage() throws InvalidSupplierError for a malformed supplier email", async () => {
+    const product = makeTypedProduct();
+    product.suppliersRegions.set("EU", new Supplier("s1", "Acme Corp", "not-an-email", "EU"));
+
+    await expect(product.addImage("thumbnail", "http://img/x.png")).rejects.toBeInstanceOf(InvalidSupplierError);
   });
 });
