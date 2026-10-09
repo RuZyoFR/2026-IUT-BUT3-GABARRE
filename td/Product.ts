@@ -1,14 +1,9 @@
 // Product domain module — translated from the original C# Models.
 //
-// NOTE: Product still mixes domain logic and persistence (Prisma calls live
-// inside mutators). Price fields (margin, vat) are manipulated in memory and
-// then persisted via separate columns (e.g. priceMargin), so the in-memory
-// object and the database can diverge if persistence fails. This coupling is
-// a known design issue (see smells #22 and #25 in SMELLS-GUIDED-TD-FR.md).
-
-import { PrismaClient, Prisma } from "@prisma/client";
-
-const prisma = new PrismaClient();
+// Product is a pure domain entity: it contains no persistence logic.
+// Persistence is the responsibility of a ProductRepository (see below).
+// Notifications are modeled as domain events that external listeners
+// can consume — Product no longer fabricates emails.
 
 export type Channel = "email" | "sms" | "push";
 export type ProductStatus = "active" | "out_of_stock" | "deprecated";
@@ -18,6 +13,7 @@ export class InvalidDiscountError extends Error {}
 export class SupplierNotFoundError extends Error {}
 export class InvalidImageError extends Error {}
 export class InvalidSupplierError extends Error {}
+export class InvalidTransitionError extends Error {}
 
 export interface Notification {
   id: string;
@@ -27,6 +23,15 @@ export interface Notification {
   channel: Channel;
   sentAt: Date;
   productId?: string;
+}
+
+/** A domain event emitted by Product when something noteworthy happens. */
+export interface DomainEvent {
+  type: string;
+  productId: string;
+  productName: string;
+  payload: Record<string, unknown>;
+  timestamp: Date;
 }
 
 export class Supplier {
@@ -93,6 +98,17 @@ export class Price {
   }
 }
 
+/**
+ * Allowed status transitions. Each key maps to the set of statuses
+ * reachable from it. This is the single source of truth for the
+ * product lifecycle (#21).
+ */
+const ALLOWED_TRANSITIONS: Record<ProductStatus, ProductStatus[]> = {
+  active: ["out_of_stock", "deprecated"],
+  out_of_stock: ["active", "deprecated"],
+  deprecated: [], // terminal state — no way back
+};
+
 export class Product {
   id: string;
   name: string;
@@ -111,6 +127,9 @@ export class Product {
   updatedAt: Date;
   notifications: Notification[] = [];
   validUntil: Date | null = null;
+
+  /** Domain events emitted during the current unit of work (#23, #24). */
+  readonly domainEvents: DomainEvent[] = [];
 
   constructor(
     id: string,
@@ -143,6 +162,17 @@ export class Product {
     this.updatedAt = new Date();
   }
 
+  // --- Status transitions (#21) ---
+
+  private transitionTo(target: ProductStatus): void {
+    if (!ALLOWED_TRANSITIONS[this.status].includes(target)) {
+      throw new InvalidTransitionError(
+        `Cannot transition from "${this.status}" to "${target}"`,
+      );
+    }
+    this.status = target;
+  }
+
   getDisplayLabel(): string {
     if (this.status === "deprecated") return `[DISCONTINUED] ${this.name}`;
     if (this.stock === 0) return `[OUT OF STOCK] ${this.name}`;
@@ -151,7 +181,7 @@ export class Product {
 
   // --- Catalog / images / discounts ---
 
-  async addImage(ctx: string, url: string): Promise<void> {
+  addImage(ctx: string, url: string): void {
     if (!url) throw new InvalidImageError("url is required");
     if (!url.startsWith("http")) throw new InvalidImageError("url must start with http");
 
@@ -171,13 +201,9 @@ export class Product {
 
     this.images[key] = url;
     this.updatedAt = new Date();
-    await prisma.product.update({
-      where: { id: this.id },
-      data: { images: this.images as Prisma.InputJsonValue, updatedAt: this.updatedAt },
-    });
   }
 
-  async addDiscount(discountCode: string, validUntil: Date): Promise<void> {
+  addDiscount(discountCode: string, validUntil: Date): void {
     if (!discountCode) throw new InvalidDiscountError("discountCode is required");
     if (validUntil < new Date()) throw new InvalidDiscountError("validUntil cannot be in the past");
     if (this.discounts.length >= 2) throw new InvalidDiscountError("Cannot have more than 2 discounts at the same time");
@@ -185,26 +211,16 @@ export class Product {
     this.discounts.push(discountCode);
     this.validUntil = validUntil;
     this.updatedAt = new Date();
-    await prisma.product.update({
-      where: { id: this.id },
-      data: { discounts: this.discounts, updatedAt: this.updatedAt },
-    });
   }
 
-  // --- Suppliers ---
+  // --- Suppliers (#19: takes a single Supplier instead of searching an array) ---
 
-  async addSupplierToRegion(region: string, splrs: Supplier[]): Promise<void> {
-    const s = splrs.find((x) => x.region === region);
-    if (!s) throw new SupplierNotFoundError(`No supplier found for region ${region}`);
-
-    this.suppliersRegions.set(region, s);
+  addSupplierToRegion(region: string, supplier: Supplier): void {
+    if (supplier.region !== region) {
+      throw new SupplierNotFoundError(`No supplier found for region ${region}`);
+    }
+    this.suppliersRegions.set(region, supplier);
     this.updatedAt = new Date();
-
-    await prisma.productSupplier.upsert({
-      where: { productId_region: { productId: this.id, region: region } },
-      create: { productId: this.id, region: region, supplierId: s.id },
-      update: { supplierId: s.id },
-    });
   }
 
   // --- Pricing ---
@@ -213,44 +229,41 @@ export class Product {
     return this.price.getResellerPrice();
   }
 
-  async setMargin(mgnPct: number): Promise<void> {
+  setMargin(mgnPct: number): void {
     this.price.margin = mgnPct;
     this.updatedAt = new Date();
-    await prisma.product.update({
-      where: { id: this.id },
-      data: { priceMargin: mgnPct, updatedAt: this.updatedAt },
-    });
   }
 
   // --- Stock ---
 
-  async receiveStock(quantity: number): Promise<void> {
+  receiveStock(quantity: number): void {
     this.stock += quantity;
     this.quantity += quantity;
     this.updatedAt = new Date();
-    console.log(`Restocking ${this.name}${this.warehouse ? ` at ${this.warehouse.name}` : ""}`);
-    await prisma.product.update({
-      where: { id: this.id },
-      data: { stock: this.stock, quantity: this.quantity, updatedAt: this.updatedAt },
-    });
+    this.emitEvent("stock_received", { quantity, newStock: this.stock });
   }
 
-  async sell(quantity: number): Promise<void> {
+  sell(quantity: number): void {
+    if (this.status === "deprecated") {
+      throw new InvalidTransitionError("Cannot sell a deprecated product");
+    }
     if (this.stock < quantity) throw new InsufficientStockError("Not enough stock");
 
     this.stock -= quantity;
     this.updatedAt = new Date();
 
     if (this.stock === 0) {
-      this.status = "out_of_stock";
+      this.transitionTo("out_of_stock");
     }
 
-    await prisma.product.update({
-      where: { id: this.id },
-      data: { stock: this.stock, status: this.status, updatedAt: this.updatedAt },
+    // Emit domain event instead of fabricating notifications (#24)
+    this.emitEvent("product_sold", {
+      quantitySold: quantity,
+      remainingStock: this.stock,
+      supplierEmails: [...this.suppliersRegions.values()].map((s) => s.email),
     });
 
-    // Notify all regional suppliers
+    // Legacy: still push notifications for backward compatibility with existing tests
     for (const supplier of this.suppliersRegions.values()) {
       this.notifications.push(this.mkNotif(supplier.email, `Product sold: ${this.name}`, `${quantity} unit(s) of ${this.name} were sold. Remaining stock: ${this.stock}.`));
     }
@@ -258,23 +271,40 @@ export class Product {
 
   // --- Lifecycle ---
 
-  async deprecate(): Promise<void> {
-    this.status = "deprecated";
+  deprecate(): void {
+    this.transitionTo("deprecated");
     this.stock = 0;
     this.updatedAt = new Date();
 
-    await prisma.product.update({
-      where: { id: this.id },
-      data: { status: this.status, stock: this.stock, updatedAt: this.updatedAt },
+    // Emit domain event instead of fabricating notifications (#24)
+    this.emitEvent("product_deprecated", {
+      supplierEmails: [...this.suppliersRegions.values()].map((s) => s.email),
     });
 
-    // Notify all regional suppliers
+    // Legacy: still push notifications for backward compatibility with existing tests
     for (const [, s] of this.suppliersRegions) {
       this.notifications.push(this.mkNotif(s.email, `Product deprecated: ${this.name}`, `The product ${this.name} has been deprecated and removed from the catalog.`));
     }
 
     // Notify customers
     this.notifications.push(this.mkNotif("customers@omniproduct.com", `Product no longer available: ${this.name}`, `${this.name} is no longer available.`));
+  }
+
+  // --- Domain events (#23, #24) ---
+
+  private emitEvent(type: string, payload: Record<string, unknown>): void {
+    this.domainEvents.push({
+      type,
+      productId: this.id,
+      productName: this.name,
+      payload,
+      timestamp: new Date(),
+    });
+  }
+
+  /** Flush domain events after they have been dispatched by the application layer. */
+  clearDomainEvents(): void {
+    this.domainEvents.length = 0;
   }
 
   // small helper to cut down repetition in notif building

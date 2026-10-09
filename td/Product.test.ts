@@ -11,20 +11,9 @@
 // tests, read the failure messages, and use them as your checklist of
 // what each field/param should actually be called.
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 
-// Product.ts instantiates a real PrismaClient at module load and calls
-// prisma.product.update()/upsert() from inside its own mutators (this is
-// itself one of the documented smells — the entity is its own repository).
-// These tests care about naming, not persistence, so Prisma is stubbed out
-// entirely rather than requiring a live database.
-vi.mock("@prisma/client", () => ({
-  PrismaClient: vi.fn().mockImplementation(function (this: any) {
-    this.product = { update: vi.fn().mockResolvedValue(undefined) };
-    this.productSupplier = { upsert: vi.fn().mockResolvedValue(undefined) };
-  }),
-  Prisma: {},
-}));
+// Product is now a pure domain entity — no Prisma mock needed (#25).
 
 import {
   Product,
@@ -36,6 +25,7 @@ import {
   SupplierNotFoundError,
   InvalidImageError,
   InvalidSupplierError,
+  InvalidTransitionError,
   DEFAULT_MARGIN_PERCENT,
   DEFAULT_VAT_PERCENT,
 } from "./Product";
@@ -157,11 +147,11 @@ describe("Product", () => {
     expect(product.notifications).toEqual([]);
   });
 
-  it("sell() pushes a notification with proper field names: recipient, subject, body, channel, productId", async () => {
+  it("sell() pushes a notification with proper field names: recipient, subject, body, channel, productId", () => {
     const product = makeProduct();
     product.suppliersRegions.set("EU", new Supplier("s1", "Acme Corp", "acme@example.com", "EU"));
 
-    await product.sell(1);
+    product.sell(1);
 
     expect(product.notifications.length, "sell() should push exactly one notification per regional supplier").toBe(1);
     const notification = product.notifications[0];
@@ -228,7 +218,7 @@ describe("Product.getResellerPrice()", () => {
 describe("getDisplayLabel()", () => {
   it("prefixes discontinued products", () => {
     const product = makeTypedProduct();
-    product.status = "deprecated";
+    product.deprecate();
 
     expect(product.getDisplayLabel()).toBe("[DISCONTINUED] Wireless Mouse");
   });
@@ -248,278 +238,334 @@ describe("getDisplayLabel()", () => {
 });
 
 describe("receiveStock()", () => {
-  it("increases both stock and quantity by the received amount", async () => {
+  it("increases both stock and quantity by the received amount", () => {
     const product = makeTypedProduct();
     product.warehouse = new Warehouse("w1", "Main Depot", "1 Dock Rd", "EU");
 
-    await product.receiveStock(20);
+    product.receiveStock(20);
 
     expect(product.stock).toBe(120);
     expect(product.quantity).toBe(120);
   });
+
+  it("emits a stock_received domain event", () => {
+    const product = makeTypedProduct();
+
+    product.receiveStock(20);
+
+    expect(product.domainEvents.length).toBe(1);
+    expect(product.domainEvents[0].type).toBe("stock_received");
+    expect(product.domainEvents[0].payload).toEqual({ quantity: 20, newStock: 120 });
+  });
 });
 
 describe("sell()", () => {
-  it("decreases stock by the sold quantity", async () => {
+  it("decreases stock by the sold quantity", () => {
     const product = makeTypedProduct();
 
-    await product.sell(30);
+    product.sell(30);
 
     expect(product.stock).toBe(70);
   });
 
-  it("flips status to out_of_stock when the last unit is sold", async () => {
+  it("flips status to out_of_stock when the last unit is sold", () => {
     const product = makeTypedProduct();
 
-    await product.sell(100);
+    product.sell(100);
 
     expect(product.stock).toBe(0);
     expect(product.status).toBe("out_of_stock");
   });
 
-  it("throws when selling more than the available stock", async () => {
+  it("throws when selling more than the available stock", () => {
     const product = makeTypedProduct();
 
-    await expect(product.sell(101)).rejects.toThrow("Not enough stock");
+    expect(() => product.sell(101)).toThrow("Not enough stock");
     expect(product.stock).toBe(100);
   });
 
-  it("pushes one notification per regional supplier", async () => {
+  it("pushes one notification per regional supplier", () => {
     const product = makeTypedProduct();
     product.suppliersRegions.set("EU", new Supplier("s1", "Acme Corp", "acme@example.com", "EU"));
     product.suppliersRegions.set("US", new Supplier("s2", "Widget Inc", "widget@example.com", "US"));
 
-    await product.sell(1);
+    product.sell(1);
 
     expect(product.notifications.length).toBe(2);
+  });
+
+  it("throws InvalidTransitionError when selling a deprecated product (#21)", () => {
+    const product = makeTypedProduct();
+    product.deprecate();
+
+    expect(() => product.sell(1)).toThrow("Cannot sell a deprecated product");
   });
 });
 
 describe("deprecate()", () => {
-  it("sets status to deprecated and zeroes out stock", async () => {
+  it("sets status to deprecated and zeroes out stock", () => {
     const product = makeTypedProduct();
 
-    await product.deprecate();
+    product.deprecate();
 
     expect(product.status).toBe("deprecated");
     expect(product.stock).toBe(0);
   });
 
-  it("notifies every regional supplier plus a customer-facing notification", async () => {
+  it("notifies every regional supplier plus a customer-facing notification", () => {
     const product = makeTypedProduct();
     product.suppliersRegions.set("EU", new Supplier("s1", "Acme Corp", "acme@example.com", "EU"));
 
-    await product.deprecate();
+    product.deprecate();
 
     // 1 supplier notification + 1 customer notification
     expect(product.notifications.length).toBe(2);
   });
+
+  it("cannot be called twice (deprecated is a terminal state, #21)", () => {
+    const product = makeTypedProduct();
+    product.deprecate();
+
+    expect(() => product.deprecate()).toThrow(InvalidTransitionError);
+  });
 });
 
 describe("addDiscount()", () => {
-  it("appends the discount code to the discounts list", async () => {
+  it("appends the discount code to the discounts list", () => {
     const product = makeTypedProduct();
     const validUntil = new Date(Date.now() + 1000 * 60 * 60 * 24); // +1 day
 
-    await product.addDiscount("SUMMER20", validUntil);
+    product.addDiscount("SUMMER20", validUntil);
 
     expect(product.discounts).toEqual(["WELCOME10", "SUMMER20"]);
   });
 
-  it("throws when adding a 3rd discount", async () => {
+  it("throws when adding a 3rd discount", () => {
     const product = makeTypedProduct();
     const validUntil = new Date(Date.now() + 1000 * 60 * 60 * 24); // +1 day
-    await product.addDiscount("SUMMER20", validUntil);
+    product.addDiscount("SUMMER20", validUntil);
 
-    await expect(product.addDiscount("FALL30", validUntil)).rejects.toThrow(
+    expect(() => product.addDiscount("FALL30", validUntil)).toThrow(
       "Cannot have more than 2 discounts at the same time",
     );
     expect(product.discounts).toEqual(["WELCOME10", "SUMMER20"]);
   });
 
-  it("throws when validUntil is in the past", async () => {
+  it("throws when validUntil is in the past", () => {
     const product = makeTypedProduct();
     const pastDate = new Date(Date.now() - 1000);
 
-    await expect(product.addDiscount("SUMMER20", pastDate)).rejects.toThrow(
+    expect(() => product.addDiscount("SUMMER20", pastDate)).toThrow(
       "validUntil cannot be in the past",
     );
   });
 
-  // FLAKY BY DESIGN (see SMELLS.md #21): this test races the real system
-  // clock. `barelyFuture` is captured with only a 1ms margin, then
-  // addDiscount() itself — not this test — spins the CPU for ~1.4ms
-  // (disguised as a "sanity-check" JSON round-trip) before taking its own
-  // `new Date()` reading to compare against it. That hidden delay usually,
-  // but not always, eats past the 1ms margin, so this test fails
-  // intermittently for a reason that has nothing to do with the discount
-  // logic actually being broken. This is what you get for comparing
-  // against a live system clock instead of an injected/fake one.
-  it("accepts a validUntil that is barely in the future", async () => {
+  it("accepts a validUntil that is barely in the future", () => {
     const product = makeTypedProduct();
-    // Only a 1ms margin: `validUntil` is essentially "now."
     const barelyFuture = new Date(Date.now() + 1);
 
-    await product.addDiscount("SUMMER20", barelyFuture);
+    product.addDiscount("SUMMER20", barelyFuture);
 
     expect(product.validUntil).toBe(barelyFuture);
   });
 });
 
 describe("addImage()", () => {
-  it("stores the image url under the given context key", async () => {
+  it("stores the image url under the given context key", () => {
     const product = makeTypedProduct();
 
-    await product.addImage("hero", "http://img/hero.png");
+    product.addImage("hero", "http://img/hero.png");
 
     expect(product.images.hero).toBe("http://img/hero.png");
   });
 
-  it("rejects a url that doesn't start with http", async () => {
+  it("rejects a url that doesn't start with http", () => {
     const product = makeTypedProduct();
 
-    await expect(product.addImage("hero", "ftp://img/hero.png")).rejects.toThrow(
+    expect(() => product.addImage("hero", "ftp://img/hero.png")).toThrow(
       "url must start with http",
     );
   });
 
-  it("appends the supplier name to the context key when overwriting an existing image", async () => {
+  it("appends the supplier name to the context key when overwriting an existing image", () => {
     const product = makeTypedProduct();
     product.suppliersRegions.set("EU", new Supplier("s1", "Acme Corp", "acme@example.com", "EU"));
-    await product.addImage("hero", "http://img/hero-v1.png");
+    product.addImage("hero", "http://img/hero-v1.png");
 
-    await product.addImage("hero", "http://img/hero-v2.png");
+    product.addImage("hero", "http://img/hero-v2.png");
 
     expect(product.images["hero-Acme Corp"]).toBe("http://img/hero-v2.png");
     expect(product.images["hero"]).toBe("http://img/hero-v1.png");
   });
 
-  it("falls back to a generic '-supplier' suffix when the supplier has no email", async () => {
+  it("falls back to a generic '-supplier' suffix when the supplier has no email", () => {
     const product = makeTypedProduct();
     product.suppliersRegions.set("EU", new Supplier("s1", "Acme Corp", "", "EU"));
-    await product.addImage("hero", "http://img/hero-v1.png");
+    product.addImage("hero", "http://img/hero-v1.png");
 
-    await product.addImage("hero", "http://img/hero-v2.png");
+    product.addImage("hero", "http://img/hero-v2.png");
 
     expect(product.images["hero-supplier"]).toBe("http://img/hero-v2.png");
   });
 
-  it("falls back to the warehouse name when the supplier has an empty region and a warehouse is set", async () => {
+  it("falls back to the warehouse name when the supplier has an empty region and a warehouse is set", () => {
     const product = makeTypedProduct();
     product.warehouse = new Warehouse("w1", "Main Depot", "1 Dock Rd", "EU");
     product.suppliersRegions.set("EU", new Supplier("s1", "Acme Corp", "acme@example.com", ""));
-    await product.addImage("hero", "http://img/hero-v1.png");
+    product.addImage("hero", "http://img/hero-v1.png");
 
-    await product.addImage("hero", "http://img/hero-v2.png");
+    product.addImage("hero", "http://img/hero-v2.png");
 
     expect(product.images["hero-Main Depot"]).toBe("http://img/hero-v2.png");
   });
 
-  it("falls back to the plain context key when the supplier has an empty region and no warehouse is set", async () => {
+  it("falls back to the plain context key when the supplier has an empty region and no warehouse is set", () => {
     const product = makeTypedProduct();
     product.suppliersRegions.set("EU", new Supplier("s1", "Acme Corp", "acme@example.com", ""));
-    await product.addImage("hero", "http://img/hero-v1.png");
+    product.addImage("hero", "http://img/hero-v1.png");
 
-    await product.addImage("hero", "http://img/hero-v2.png");
+    product.addImage("hero", "http://img/hero-v2.png");
 
     expect(product.images["hero"]).toBe("http://img/hero-v2.png");
   });
 
-  it("falls back to the plain context key when the supplier has no region at all", async () => {
+  it("falls back to the plain context key when the supplier has no region at all", () => {
     const product = makeTypedProduct();
-    // Supplier with falsy region (empty string or would be undefined if constructor allowed it)
     product.suppliersRegions.set("key1", new Supplier("s1", "NoRegion Corp", "noregion@example.com", ""));
-    await product.addImage("hero", "http://img/hero-v1.png");
+    product.addImage("hero", "http://img/hero-v1.png");
 
-    await product.addImage("hero", "http://img/hero-v2.png");
+    product.addImage("hero", "http://img/hero-v2.png");
 
-    // No warehouse set, so falls back to plain context key
     expect(product.images["hero"]).toBe("http://img/hero-v2.png");
   });
 
-  it("falls back to warehouse name when supplier has no region and warehouse is set", async () => {
+  it("falls back to warehouse name when supplier has no region and warehouse is set", () => {
     const product = makeTypedProduct();
     product.warehouse = new Warehouse("w1", "Central Hub", "1 Hub St", "UK");
-    // Supplier with no/empty region
     product.suppliersRegions.set("key1", new Supplier("s1", "NoRegion Corp", "noregion@example.com", ""));
-    await product.addImage("hero", "http://img/hero-v1.png");
+    product.addImage("hero", "http://img/hero-v1.png");
 
-    await product.addImage("hero", "http://img/hero-v2.png");
+    product.addImage("hero", "http://img/hero-v2.png");
 
-    // With warehouse set, should append warehouse name instead of plain context
     expect(product.images["hero-Central Hub"]).toBe("http://img/hero-v2.png");
   });
 
-  it("throws when a regional supplier has a malformed email", async () => {
+  it("throws when a regional supplier has a malformed email", () => {
     const product = makeTypedProduct();
     product.suppliersRegions.set("EU", new Supplier("s1", "Acme Corp", "not-an-email", "EU"));
-    await product.addImage("hero", "http://img/hero-v1.png");
+    product.addImage("hero", "http://img/hero-v1.png");
 
-    await expect(product.addImage("hero", "http://img/hero-v2.png")).rejects.toThrow(
+    expect(() => product.addImage("hero", "http://img/hero-v2.png")).toThrow(
       "Supplier Acme Corp has a malformed email: not-an-email",
     );
   });
 });
 
 describe("addSupplierToRegion()", () => {
-  it("assigns the matching supplier to its region", async () => {
+  it("assigns the supplier to its region", () => {
     const product = makeTypedProduct();
     const supplier = new Supplier("s1", "Acme Corp", "acme@example.com", "EU");
 
-    await product.addSupplierToRegion("EU", [supplier]);
+    product.addSupplierToRegion("EU", supplier);
 
     expect(product.suppliersRegions.get("EU")).toBe(supplier);
   });
 
-  it("throws when no supplier matches the region", async () => {
+  it("throws when the supplier's region doesn't match", () => {
     const product = makeTypedProduct();
     const supplier = new Supplier("s1", "Acme Corp", "acme@example.com", "EU");
 
-    await expect(product.addSupplierToRegion("APAC", [supplier])).rejects.toThrow(
+    expect(() => product.addSupplierToRegion("APAC", supplier)).toThrow(
       "No supplier found for region APAC",
     );
   });
 });
 
 describe("business errors are typed", () => {
-  it("sell() throws InsufficientStockError", async () => {
-    await expect(makeTypedProduct().sell(101)).rejects.toBeInstanceOf(InsufficientStockError);
+  it("sell() throws InsufficientStockError", () => {
+    expect(() => makeTypedProduct().sell(101)).toThrow(InsufficientStockError);
   });
 
-  it("addDiscount() throws InvalidDiscountError for a past date, a missing code and a 3rd discount", async () => {
+  it("addDiscount() throws InvalidDiscountError for a past date, a missing code and a 3rd discount", () => {
     const future = new Date(Date.now() + 1000 * 60 * 60 * 24);
 
-    await expect(makeTypedProduct().addDiscount("X", new Date(Date.now() - 1000))).rejects.toBeInstanceOf(InvalidDiscountError);
-    await expect(makeTypedProduct().addDiscount("", future)).rejects.toBeInstanceOf(InvalidDiscountError);
+    expect(() => makeTypedProduct().addDiscount("X", new Date(Date.now() - 1000))).toThrow(InvalidDiscountError);
+    expect(() => makeTypedProduct().addDiscount("", future)).toThrow(InvalidDiscountError);
 
     const product = makeTypedProduct();
-    await product.addDiscount("SUMMER20", future);
-    await expect(product.addDiscount("FALL30", future)).rejects.toBeInstanceOf(InvalidDiscountError);
+    product.addDiscount("SUMMER20", future);
+    expect(() => product.addDiscount("FALL30", future)).toThrow(InvalidDiscountError);
   });
 
-  it("addSupplierToRegion() throws SupplierNotFoundError", async () => {
-    await expect(makeTypedProduct().addSupplierToRegion("APAC", [])).rejects.toBeInstanceOf(SupplierNotFoundError);
+  it("addSupplierToRegion() throws SupplierNotFoundError", () => {
+    const supplier = new Supplier("s1", "Acme Corp", "acme@example.com", "EU");
+    expect(() => makeTypedProduct().addSupplierToRegion("APAC", supplier)).toThrow(SupplierNotFoundError);
   });
 
-  it("addImage() throws InvalidImageError for a bad url", async () => {
-    await expect(makeTypedProduct().addImage("hero", "ftp://x")).rejects.toBeInstanceOf(InvalidImageError);
-    await expect(makeTypedProduct().addImage("hero", "")).rejects.toBeInstanceOf(InvalidImageError);
+  it("addImage() throws InvalidImageError for a bad url", () => {
+    expect(() => makeTypedProduct().addImage("hero", "ftp://x")).toThrow(InvalidImageError);
+    expect(() => makeTypedProduct().addImage("hero", "")).toThrow(InvalidImageError);
   });
 
-  it("addImage() throws InvalidSupplierError for a malformed supplier email", async () => {
+  it("addImage() throws InvalidSupplierError for a malformed supplier email", () => {
     const product = makeTypedProduct();
     product.suppliersRegions.set("EU", new Supplier("s1", "Acme Corp", "not-an-email", "EU"));
 
-    await expect(product.addImage("thumbnail", "http://img/x.png")).rejects.toBeInstanceOf(InvalidSupplierError);
+    expect(() => product.addImage("thumbnail", "http://img/x.png")).toThrow(InvalidSupplierError);
   });
 });
 
 describe("setMargin()", () => {
-  it("updates the price margin", async () => {
+  it("updates the price margin", () => {
     const product = makeTypedProduct();
 
-    await product.setMargin(20);
+    product.setMargin(20);
 
     expect(product.price.margin).toBe(20);
+  });
+});
+
+describe("status transitions (#21)", () => {
+  it("cannot transition from deprecated to active", () => {
+    const product = makeTypedProduct();
+    product.deprecate();
+
+    expect(() => { (product as any).transitionTo("active"); }).toThrow(InvalidTransitionError);
+  });
+
+  it("selling a deprecated product throws InvalidTransitionError", () => {
+    const product = makeTypedProduct();
+    product.deprecate();
+
+    expect(() => product.sell(1)).toThrow(InvalidTransitionError);
+  });
+});
+
+describe("domain events (#23, #24)", () => {
+  it("sell() emits a product_sold event", () => {
+    const product = makeTypedProduct();
+    product.sell(5);
+
+    expect(product.domainEvents).toHaveLength(1);
+    expect(product.domainEvents[0].type).toBe("product_sold");
+    expect(product.domainEvents[0].payload).toMatchObject({ quantitySold: 5, remainingStock: 95 });
+  });
+
+  it("deprecate() emits a product_deprecated event", () => {
+    const product = makeTypedProduct();
+    product.deprecate();
+
+    expect(product.domainEvents).toHaveLength(1);
+    expect(product.domainEvents[0].type).toBe("product_deprecated");
+  });
+
+  it("clearDomainEvents() empties the event list", () => {
+    const product = makeTypedProduct();
+    product.sell(1);
+    expect(product.domainEvents.length).toBeGreaterThan(0);
+
+    product.clearDomainEvents();
+
+    expect(product.domainEvents).toHaveLength(0);
   });
 });
