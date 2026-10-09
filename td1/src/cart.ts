@@ -14,13 +14,18 @@ interface Item {
 
 const TAX_RATE = 0.2;
 
-// Calcule le total TTC du panier
+// Arrondit au centime : évite les restes de calcul en flottants (ex. 0.1 + 0.2)
+function roundToCents(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+// Calcule le total TTC du panier (arrondi au centime)
 export function total(cart: Item[]): number {
   let sum = 0;
   for (const item of cart) {
     sum += item.price * item.qty;
   }
-  return sum + sum * TAX_RATE;
+  return roundToCents(sum * (1 + TAX_RATE));
 }
 
 // Formate un prix en euros
