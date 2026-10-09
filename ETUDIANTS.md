@@ -32,7 +32,7 @@
 ## 3. Rendu
 
 - **TD :** TD1
-- **Lien de la PR :** https://github.com/IUT-BUT3-2026/revues-de-code/pull/PENDING
+- **Lien de la PR :** https://github.com/IUT-BUT3-2026/revues-de-code/pull/30 (revue) ; corrections : pull/31 à 35
 
 ## 4. Note — réservée à l'enseignant
 
