@@ -6,10 +6,10 @@
  * revue, puis d'en corriger au moins trois.
  */
 
-interface Item {
+export interface Item {
   name: string;
   price: number;
-  qty: number;
+  quantity: number;
 }
 
 const TAX_RATE = 0.2;
@@ -18,7 +18,7 @@ const TAX_RATE = 0.2;
 export function total(cart: Item[]): number {
   let sum = 0;
   for (const item of cart) {
-    sum += item.price * item.qty;
+    sum += item.price * item.quantity;
   }
   return sum + sum * TAX_RATE;
 }
