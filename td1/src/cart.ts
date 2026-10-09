@@ -14,10 +14,20 @@ interface Item {
 
 const TAX_RATE = 0.2;
 
+function assertValidItem(item: Item): void {
+  if (!Number.isFinite(item.price) || item.price < 0) {
+    throw new Error(`Prix invalide pour "${item.name}" : ${item.price}`);
+  }
+  if (!Number.isInteger(item.qty) || item.qty <= 0) {
+    throw new Error(`Quantité invalide pour "${item.name}" : ${item.qty}`);
+  }
+}
+
 // Calcule le total TTC du panier
 export function total(cart: Item[]): number {
   let sum = 0;
   for (const item of cart) {
+    assertValidItem(item);
     sum += item.price * item.qty;
   }
   return sum + sum * TAX_RATE;
