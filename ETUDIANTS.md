@@ -27,7 +27,6 @@
 |------------------|---------------|------|
 |GABARRE CLAVERIA Santiago|  RuZyoFR  | porteur |
 | DAUNIS Nathanael |  Stefffox     | membre |
-|                  |               | membre |
 
 ## 3. Rendu
 
