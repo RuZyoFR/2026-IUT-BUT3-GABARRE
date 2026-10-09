@@ -31,8 +31,8 @@
 
 ## 3. Rendu
 
-- **TD :** (ex. `TD1`)
-- **Lien de la PR :** (à coller une fois la PR ouverte)
+- **TD :** TD2
+- **Lien de la PR :** TD2 : https://github.com/IUT-BUT3-2026/revues-de-code/pull/28 (version complète) ou PR 36 à 44 (série découpée) ; TD1 : PR 30 à 35
 
 ## 4. Note — réservée à l'enseignant
 
