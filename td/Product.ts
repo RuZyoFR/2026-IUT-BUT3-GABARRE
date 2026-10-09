@@ -15,6 +15,12 @@ const prisma = new PrismaClient();
 export type Channel = "email" | "sms" | "push";
 export type ProductStatus = "active" | "out_of_stock" | "deprecated";
 
+export class InsufficientStockError extends Error {}
+export class InvalidDiscountError extends Error {}
+export class SupplierNotFoundError extends Error {}
+export class InvalidImageError extends Error {}
+export class InvalidSupplierError extends Error {}
+
 export interface Notification {
   id: string;
   recipient: string;
@@ -134,7 +140,7 @@ export class Product {
                 } else {
                   // Supplier has a region and email field, but email is malformed (missing valid @domain).
                   // Treat as a data integrity error: throw instead of gracefully degrading.
-                  throw new Error(`Supplier ${s.name} has a malformed email: ${s.email}`);
+                  throw new InvalidSupplierError(`Supplier ${s.name} has a malformed email: ${s.email}`);
                 }
               } else {
                 // Supplier has a region but NO email field (empty string, falsy).
@@ -159,19 +165,19 @@ export class Product {
         });
       } else {
         // URL fails the "starts with http" check (smell #24: ad-hoc string validation).
-        throw new Error("url must start with http");
+        throw new InvalidImageError("url must start with http");
       }
     } else {
       // URL is falsy (empty string, null, undefined).
       // Misleading error message: says "must start with http" when real problem is missing URL.
-      throw new Error("url must start with http");
+      throw new InvalidImageError("url must start with http");
     }
   }
 
   async addDiscount(discountCode: string, validUntil: Date): Promise<void> {
-    if (!discountCode) throw new Error("discountCode is required");
-    if (validUntil < new Date()) throw new Error("validUntil cannot be in the past");
-    if (this.discounts.length >= 2) throw new Error("Cannot have more than 2 discounts at the same time");
+    if (!discountCode) throw new InvalidDiscountError("discountCode is required");
+    if (validUntil < new Date()) throw new InvalidDiscountError("validUntil cannot be in the past");
+    if (this.discounts.length >= 2) throw new InvalidDiscountError("Cannot have more than 2 discounts at the same time");
 
     this.discounts.push(discountCode);
     this.validUntil = validUntil;
@@ -186,7 +192,7 @@ export class Product {
 
   async addSupplierToRegion(region: string, splrs: Supplier[]): Promise<void> {
     const s = splrs.find((x) => x.region === region);
-    if (!s) throw new Error(`No supplier found for region ${region}`);
+    if (!s) throw new SupplierNotFoundError(`No supplier found for region ${region}`);
 
     this.suppliersRegions.set(region, s);
     this.updatedAt = new Date();
@@ -229,7 +235,7 @@ export class Product {
   }
 
   async sell(quantity: number): Promise<void> {
-    if (this.stock < quantity) throw new Error("Not enough stock");
+    if (this.stock < quantity) throw new InsufficientStockError("Not enough stock");
 
     this.stock -= quantity;
     this.updatedAt = new Date();
