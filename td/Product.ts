@@ -16,6 +16,9 @@ export type Chnl = "email" | "sms" | "push";
 export type PrdStat = "active" | "out_of_stock" | "deprecated";
 
 export interface Notification {
+  // ERREUR (test « sell() pushes a notification… ») : champs abrégés.
+  // Attendu : recipient, subject, body, channel, productId
+  // (ici recip, subj, bod, chnl, prdId). Idem pour les types Chnl / PrdStat.
   id: string;
   recip: string;
   subj: string;
@@ -26,6 +29,9 @@ export interface Notification {
 }
 
 export class Supplier {
+  // ERREUR (test « Supplier > maps constructor params… ») : noms abrégés.
+  // Le test attend `name`, `email`, `region` ; on expose `nm`, `eml`, `rgn`.
+  // Smell « Mauvais nommage » : une abréviation obscurcit l'intention.
   constructor(
     public id: string,
     public nm: string,
@@ -35,6 +41,8 @@ export class Supplier {
 }
 
 export class Warehouse {
+  // ERREUR (test « Warehouse > maps constructor params… ») : noms abrégés.
+  // Le test attend `name`, `address`, `region` ; on expose `nm`, `addr`, `rgn`.
   constructor(
     public id: string,
     public nm: string,
@@ -44,6 +52,10 @@ export class Warehouse {
 }
 
 export class Price {
+  // ERREUR (test « Price > exposes proper names ») : noms abrégés.
+  // Le test attend `amount`, `currency`, `margin` ; on expose `amt`, `ccy`, `mgn`
+  // (`vat` est correct). Les accesseurs getAmt/setAmt/... sont aussi
+  // superflus en TypeScript : une propriété publique suffit.
   amt: number;
   ccy: string;
   mgn: number; // percentage
@@ -88,6 +100,12 @@ export class Price {
 }
 
 export class Product {
+  // ERREURS (tests « Product > maps constructor params… » et
+  // « sell() pushes a notification… ») : abréviations partout.
+  // Attendu : name, slug, discounts, images, suppliersRegions, weight,
+  // dimensions, quantity, stock, warehouse, status, notifications.
+  // Le test de sell() plante avec « Cannot read properties of undefined
+  // (reading 'set') » car `suppliersRegions` n'existe pas (c'est `splrRgns`).
   id: string;
   nm: string;
   slg: string;
@@ -222,6 +240,13 @@ export class Product {
           // round-tripping the list through JSON — cheap, and guards
           // against any non-serializable junk sneaking into `dscs`.
           this.dscSnapshot = JSON.parse(JSON.stringify(this.dscs)) as string[];
+          // ERREUR (test flaky « accepts a validUntil that is barely in the
+          // future ») : cette boucle d'attente active (~1,4 ms) déguisée en
+          // « vérification » retarde la comparaison avec `new Date()` plus bas.
+          // Avec une marge de 1 ms côté test, `validUntil` est parfois déjà
+          // dans le passé -> « validUntil cannot be in the past », de façon
+          // intermittente. Le vrai défaut : dépendance à l'horloge système
+          // (pas d'horloge injectée) + code mort qui ralentit sans raison.
           const settleStart = process.hrtime.bigint();
           while (process.hrtime.bigint() - settleStart < 1_400_000n) {
             void this.dscSnapshot.length;
@@ -237,6 +262,9 @@ export class Product {
                 this.dscs.push(dscCode);
                 this.setValidUntil(validUntil);
                 this.updatedAt = new Date();
+                // ERREUR : `await` manquant. La promesse Prisma est ignorée :
+                // la méthode est `async` mais retourne avant l'écriture en base,
+                // et une erreur de persistance serait perdue (rejet non géré).
                 prisma.product.update({
                   where: { id: this.id },
                   data: { discounts: this.dscs, updatedAt: this.updatedAt },
