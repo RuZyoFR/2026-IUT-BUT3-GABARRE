@@ -28,13 +28,14 @@ export function formatPrice(value: number): string {
   return value.toFixed(2) + " €";
 }
 
-// Encaisse le panier : affiche le total et prépare le paiement
-export function checkout(cart: Item[]) {
+// Encaisse le panier : affiche le total et retourne le montant à payer
+// (0 si le panier est vide), pour que l'appelant puisse lancer le paiement.
+export function checkout(cart: Item[]): number {
   if (cart.length === 0) {
     console.log("Panier vide");
-    return;
+    return 0;
   }
-  const t = total(cart);
-  console.log("Total à payer : " + formatPrice(t));
-  // TODO: intégrer le paiement
+  const amountToPay = total(cart);
+  console.log("Total à payer : " + formatPrice(amountToPay));
+  return amountToPay;
 }
