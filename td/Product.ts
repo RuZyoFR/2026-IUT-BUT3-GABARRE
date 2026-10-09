@@ -36,6 +36,13 @@ export class Supplier {
     public email: string,
     public region: string,
   ) {}
+
+  /** Returns true when the email looks structurally valid (has @ and a dot after @). */
+  hasValidEmail(): boolean {
+    if (!this.email) return false;
+    const atIdx = this.email.indexOf("@");
+    return atIdx > 0 && this.email.indexOf(".", atIdx) > atIdx;
+  }
 }
 
 export class Warehouse {
@@ -139,7 +146,7 @@ export class Product {
           for (const [, s] of this.suppliersRegions) {
             if (s.region) {
               if (s.email) {
-                if (s.email.indexOf("@") > 0 && s.email.indexOf(".", s.email.indexOf("@")) > s.email.indexOf("@")) {
+                if (s.hasValidEmail()) {
                   k = ctx + "-" + s.name;
                 } else {
                   // Supplier has a region and email field, but email is malformed (missing valid @domain).
@@ -211,9 +218,7 @@ export class Product {
   // --- Pricing ---
 
   getResellerPrice(): number {
-    const mgnAmt = (this.price.amount * this.price.margin) / 100;
-    const vatAmt = (mgnAmt * this.price.vat) / 100;
-    return this.price.amount + mgnAmt + vatAmt;
+    return this.price.getResellerPrice();
   }
 
   async setMargin(mgnPct: number): Promise<void> {
