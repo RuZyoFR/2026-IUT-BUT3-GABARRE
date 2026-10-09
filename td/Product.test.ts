@@ -36,6 +36,8 @@ import {
   SupplierNotFoundError,
   InvalidImageError,
   InvalidSupplierError,
+  DEFAULT_MARGIN_PERCENT,
+  DEFAULT_VAT_PERCENT,
 } from "./Product";
 
 function hasProp(obj: unknown, propName: string): boolean {
@@ -53,10 +55,10 @@ describe("Price", () => {
     expect(price.currency).toBe("EUR");
 
     expect(hasProp(price, "margin"), "Price should have a property named `margin` (not an abbreviation)").toBe(true);
-    expect(price.margin).toBe(15);
+    expect(price.margin).toBe(DEFAULT_MARGIN_PERCENT);
 
     expect(hasProp(price, "vat"), "Price should have a property named `vat`").toBe(true);
-    expect(price.vat).toBe(20);
+    expect(price.vat).toBe(DEFAULT_VAT_PERCENT);
   });
 });
 

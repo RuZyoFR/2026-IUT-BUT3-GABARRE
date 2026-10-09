@@ -1,12 +1,10 @@
-// Translated from Models/{Product,Price,Notification,Supplier,Warehouse}.cs
+// Product domain module — translated from the original C# Models.
 //
-// The C# version kept two representations of the same data in sync by hand:
-// domain fields marked [NotMapped] (Price, Discounts, Images, SuppliersRegions,
-// Warehouse) plus flattened EF columns (PriceAmount/DiscountsCsv/ImagesJson/...),
-// reconciled via SyncEfColumns()/HydrateFromEfColumns(). Prisma maps Decimal,
-// String[] and Json columns natively (see schema.prisma), so that flattening
-// and the two sync methods are gone: PrismaClient reads/writes plain objects
-// and there is exactly one representation of each field.
+// NOTE: Product still mixes domain logic and persistence (Prisma calls live
+// inside mutators). Price fields (margin, vat) are manipulated in memory and
+// then persisted via separate columns (e.g. priceMargin), so the in-memory
+// object and the database can diverge if persistence fails. This coupling is
+// a known design issue (see smells #22 and #25 in SMELLS-GUIDED-TD-FR.md).
 
 import { PrismaClient, Prisma } from "@prisma/client";
 
@@ -49,6 +47,12 @@ export class Warehouse {
   ) {}
 }
 
+/** Default reseller margin, in percent of the base price. */
+export const DEFAULT_MARGIN_PERCENT = 15;
+
+/** Default VAT rate, in percent — applied on the margin amount only. */
+export const DEFAULT_VAT_PERCENT = 20;
+
 export class Price {
   amount: number;
   currency: string;
@@ -58,8 +62,8 @@ export class Price {
   constructor(amount: number, currency: string) {
     this.amount = amount;
     this.currency = currency;
-    this.margin = 15;
-    this.vat = 20;
+    this.margin = DEFAULT_MARGIN_PERCENT;
+    this.vat = DEFAULT_VAT_PERCENT;
   }
 
   getResellerPrice(): number {
