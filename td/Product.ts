@@ -43,6 +43,19 @@ export class Supplier {
     const atIdx = this.email.indexOf("@");
     return atIdx > 0 && this.email.indexOf(".", atIdx) > atIdx;
   }
+
+  /**
+   * Returns the suffix to append to an image context key for this supplier.
+   * Throws if the supplier has an email but it is malformed.
+   */
+  getImageKeySuffix(): string {
+    if (!this.region) return "";
+    if (!this.email) return "-supplier";
+    if (!this.hasValidEmail()) {
+      throw new InvalidSupplierError(`Supplier ${this.name} has a malformed email: ${this.email}`);
+    }
+    return "-" + this.name;
+  }
 }
 
 export class Warehouse {
@@ -139,50 +152,29 @@ export class Product {
   // --- Catalog / images / discounts ---
 
   async addImage(ctx: string, url: string): Promise<void> {
-    if (url) {
-      if (url.substring(0, 4) === "http") {
-        if (!(this.images[ctx] === undefined)) {
-          let k = ctx;
-          for (const [, s] of this.suppliersRegions) {
-            if (s.region) {
-              if (s.email) {
-                if (s.hasValidEmail()) {
-                  k = ctx + "-" + s.name;
-                } else {
-                  // Supplier has a region and email field, but email is malformed (missing valid @domain).
-                  // Treat as a data integrity error: throw instead of gracefully degrading.
-                  throw new InvalidSupplierError(`Supplier ${s.name} has a malformed email: ${s.email}`);
-                }
-              } else {
-                // Supplier has a region but NO email field (empty string, falsy).
-                // Fall back to generic "-supplier" marker, losing the supplier's identity.
-                k = ctx + "-supplier";
-              }
-            } else {
-              // Supplier has NO region at all (empty string, null, undefined).
-              // Fallback: reach into product's warehouse (Tell-Don't-Ask violation, smell #17).
-              // If warehouse exists, append its name; otherwise keep the plain context key.
-              k = this.warehouse ? ctx + "-" + this.warehouse.name : ctx;
-            }
-          }
-          this.images[k] = url;
-        } else {
-          this.images[ctx] = url;
+    if (!url) throw new InvalidImageError("url is required");
+    if (!url.startsWith("http")) throw new InvalidImageError("url must start with http");
+
+    // Determine the storage key: plain context if new, suffixed if overwriting
+    let key = ctx;
+    if (this.images[ctx] !== undefined) {
+      for (const [, s] of this.suppliersRegions) {
+        const suffix = s.getImageKeySuffix();
+        if (suffix) {
+          key = ctx + suffix;
+        } else if (this.warehouse) {
+          key = ctx + "-" + this.warehouse.name;
         }
-        this.updatedAt = new Date();
-        await prisma.product.update({
-          where: { id: this.id },
-          data: { images: this.images as Prisma.InputJsonValue, updatedAt: this.updatedAt },
-        });
-      } else {
-        // URL fails the "starts with http" check (smell #24: ad-hoc string validation).
-        throw new InvalidImageError("url must start with http");
+        // else: keep plain ctx
       }
-    } else {
-      // URL is falsy (empty string, null, undefined).
-      // Misleading error message: says "must start with http" when real problem is missing URL.
-      throw new InvalidImageError("url must start with http");
     }
+
+    this.images[key] = url;
+    this.updatedAt = new Date();
+    await prisma.product.update({
+      where: { id: this.id },
+      data: { images: this.images as Prisma.InputJsonValue, updatedAt: this.updatedAt },
+    });
   }
 
   async addDiscount(discountCode: string, validUntil: Date): Promise<void> {
