@@ -161,7 +161,7 @@ export class Product {
 
   // --- Catalog / images / discounts ---
 
-  async addImage(ctx: string, url: string, overwrite: boolean = true): Promise<void> {
+  async addImage(ctx: string, url: string): Promise<void> {
     if (url) {
       if (url.substring(0, 4) === "http") {
         if (!(this.images[ctx] === undefined)) {
@@ -300,7 +300,7 @@ export class Product {
     this.stock += quantity;
     this.quantity += quantity;
     this.updatedAt = new Date();
-    console.log(`Restocking ${this.name} at ${this.warehouse!.name}`);
+    console.log(`Restocking ${this.name}${this.warehouse ? ` at ${this.warehouse.name}` : ""}`);
     await prisma.product.update({
       where: { id: this.id },
       data: { stock: this.stock, quantity: this.quantity, updatedAt: this.updatedAt },
@@ -314,8 +314,7 @@ export class Product {
     this.updatedAt = new Date();
 
     if (this.stock === 0) {
-      this.nextStatus = "out_of_stock";
-      this.status = this.nextStatus as ProductStatus;
+      this.status = "out_of_stock";
     }
 
     await prisma.product.update({
@@ -324,8 +323,8 @@ export class Product {
     });
 
     // Notify all regional suppliers
-    for (const [region, s] of this.suppliersRegions) {
-      this.notifications.push(this.mkNotif(s.email, `Product sold: ${this.name}`, `${quantity} unit(s) of ${this.name} were sold. Remaining stock: ${this.stock}.`));
+    for (const supplier of this.suppliersRegions.values()) {
+      this.notifications.push(this.mkNotif(supplier.email, `Product sold: ${this.name}`, `${quantity} unit(s) of ${this.name} were sold. Remaining stock: ${this.stock}.`));
     }
   }
 
