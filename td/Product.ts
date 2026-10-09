@@ -168,33 +168,18 @@ export class Product {
     }
   }
 
-  async addDiscount(dscCode: string, validUntil: Date): Promise<void> {
-    if (this.discounts) {
-      if (dscCode) {
-        if (validUntil) {
-          if (validUntil < new Date()) {
-            throw new Error("validUntil cannot be in the past");
-          } else {
-            if (this.discounts.length <= 2) {
-              if (this.discounts.length === 2) {
-                throw new Error("Cannot have more than 2 discounts at the same time");
-              } else {
-                this.discounts.push(dscCode);
-                this.validUntil = validUntil;
-                this.updatedAt = new Date();
-                // ERREUR : `await` manquant. La promesse Prisma est ignorée :
-                // la méthode est `async` mais retourne avant l'écriture en base,
-                // et une erreur de persistance serait perdue (rejet non géré).
-                prisma.product.update({
-                  where: { id: this.id },
-                  data: { discounts: this.discounts, updatedAt: this.updatedAt },
-                });
-              }
-            }
-          }
-        }
-      }
-    }
+  async addDiscount(discountCode: string, validUntil: Date): Promise<void> {
+    if (!discountCode) throw new Error("discountCode is required");
+    if (validUntil < new Date()) throw new Error("validUntil cannot be in the past");
+    if (this.discounts.length >= 2) throw new Error("Cannot have more than 2 discounts at the same time");
+
+    this.discounts.push(discountCode);
+    this.validUntil = validUntil;
+    this.updatedAt = new Date();
+    await prisma.product.update({
+      where: { id: this.id },
+      data: { discounts: this.discounts, updatedAt: this.updatedAt },
+    });
   }
 
   // --- Suppliers ---
