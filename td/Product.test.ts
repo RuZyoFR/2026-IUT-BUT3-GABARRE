@@ -511,3 +511,13 @@ describe("business errors are typed", () => {
     await expect(product.addImage("thumbnail", "http://img/x.png")).rejects.toBeInstanceOf(InvalidSupplierError);
   });
 });
+
+describe("setMargin()", () => {
+  it("updates the price margin", async () => {
+    const product = makeTypedProduct();
+
+    await product.setMargin(20);
+
+    expect(product.price.margin).toBe(20);
+  });
+});
