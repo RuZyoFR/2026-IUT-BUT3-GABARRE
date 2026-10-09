@@ -350,7 +350,7 @@ describe("addDiscount()", () => {
 
     await product.addDiscount("SUMMER20", barelyFuture);
 
-    expect(product.getValidUntil()).toBe(barelyFuture);
+    expect(product.validUntil).toBe(barelyFuture);
   });
 });
 

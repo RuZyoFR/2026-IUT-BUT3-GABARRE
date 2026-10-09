@@ -44,8 +44,6 @@ export class Warehouse {
 }
 
 export class Price {
-  // ERREUR (smell #10) : les accesseurs getAmount/setAmount/... sont superflus
-  // en TypeScript : une propriété publique suffit.
   amount: number;
   currency: string;
   margin: number; // percentage
@@ -62,30 +60,6 @@ export class Price {
     const mgnAmt = (this.amount * this.margin) / 100;
     const vatAmt = (mgnAmt * this.vat) / 100;
     return this.amount + mgnAmt + vatAmt;
-  }
-
-  getAmt(): number {
-    return this.amount;
-  }
-
-  setAmt(amount: number): void {
-    this.amount = amount;
-  }
-
-  getCcy(): string {
-    return this.currency;
-  }
-
-  setCcy(currency: string): void {
-    this.currency = currency;
-  }
-
-  getMgn(): number {
-    return this.margin;
-  }
-
-  setMgn(margin: number): void {
-    this.margin = margin;
   }
 }
 
@@ -107,7 +81,6 @@ export class Product {
   updatedAt: Date;
   notifications: Notification[] = [];
   validUntil: Date | null = null;
-  nextStatus: ProductStatus | undefined;
   discountSnapshot: string[] | undefined;
 
   constructor(
@@ -196,14 +169,6 @@ export class Product {
     }
   }
 
-  getValidUntil(): Date | null {
-    return this.validUntil;
-  }
-
-  setValidUntil(validUntil: Date | null): void {
-    this.validUntil = validUntil;
-  }
-
   async addDiscount(dscCode: string, validUntil: Date): Promise<void> {
     if (this.discounts) {
       if (dscCode) {
@@ -232,7 +197,7 @@ export class Product {
                 throw new Error("Cannot have more than 2 discounts at the same time");
               } else {
                 this.discounts.push(dscCode);
-                this.setValidUntil(validUntil);
+                this.validUntil = validUntil;
                 this.updatedAt = new Date();
                 // ERREUR : `await` manquant. La promesse Prisma est ignorée :
                 // la méthode est `async` mais retourne avant l'écriture en base,
