@@ -81,7 +81,6 @@ export class Product {
   updatedAt: Date;
   notifications: Notification[] = [];
   validUntil: Date | null = null;
-  discountSnapshot: string[] | undefined;
 
   constructor(
     id: string,
@@ -173,22 +172,6 @@ export class Product {
     if (this.discounts) {
       if (dscCode) {
         if (validUntil) {
-          // Sanity-check the discount code isn't already applied by
-          // round-tripping the list through JSON — cheap, and guards
-          // against any non-serializable junk sneaking into `discounts`.
-          this.discountSnapshot = JSON.parse(JSON.stringify(this.discounts)) as string[];
-          // ERREUR (test flaky « accepts a validUntil that is barely in the
-          // future ») : cette boucle d'attente active (~1,4 ms) déguisée en
-          // « vérification » retarde la comparaison avec `new Date()` plus bas.
-          // Avec une marge de 1 ms côté test, `validUntil` est parfois déjà
-          // dans le passé -> « validUntil cannot be in the past », de façon
-          // intermittente. Le vrai défaut : dépendance à l'horloge système
-          // (pas d'horloge injectée) + code mort qui ralentit sans raison.
-          const settleStart = process.hrtime.bigint();
-          while (process.hrtime.bigint() - settleStart < 1_400_000n) {
-            void this.discountSnapshot.length;
-          }
-
           if (validUntil < new Date()) {
             throw new Error("validUntil cannot be in the past");
           } else {
